@@ -4,6 +4,9 @@ declare(strict_types=1);
 namespace DGS;
 
 
+use http\Exception;
+use http\Exception\BadConversionException;
+
 abstract class AbstractQueryBuilder implements AbstractQueryBuilderInterface
 {
     protected $_fields;
@@ -11,35 +14,35 @@ abstract class AbstractQueryBuilder implements AbstractQueryBuilderInterface
     /**
      * @var array
      */
-    private $_select;
+    private $_select = [];
     /**
      * @var array|AbstractQueryBuilderInterface|string
      */
-    private $_from;
+    private $_from = [];
     /**
      * @var array
      */
-    private $_where;
+    private $_where = [];
     /**
      * @var array
      */
-    private $_groupBy;
+    private $_groupBy = [];
     /**
      * @var array
      */
-    private $_orderBy;
+    private $_orderBy = [];
     /**
      * @var array|string
      */
-    private $_having;
+    private $_having = [];
     /**
      * @var int
      */
-    private $_limit;
+    private $_limit = null;
     /**
      * @var int
      */
-    private $_offset;
+    private $_offset = null;
 
     /**
      * AbstractQueryBuilder constructor.
@@ -58,7 +61,7 @@ abstract class AbstractQueryBuilder implements AbstractQueryBuilderInterface
 
     public function from($tables): AbstractQueryBuilderInterface
     {
-        $this->_from = $tables;
+        $this->_from = is_string($tables) ? [$tables] : $tables;
         return $this;
     }
 
@@ -118,6 +121,7 @@ abstract class AbstractQueryBuilder implements AbstractQueryBuilderInterface
     protected function buildSelect(): string
     {
         $fields = "*";
+
         if (!empty($this->_select)) {
             $fields = $this->buildFields();
         }
@@ -128,6 +132,7 @@ abstract class AbstractQueryBuilder implements AbstractQueryBuilderInterface
     protected function buildFields(): string
     {
         $fields = [];
+
         foreach ($this->_select as $alias => $field) {
             $fields[] = $this->buildField($field, $alias);
         }
@@ -135,9 +140,10 @@ abstract class AbstractQueryBuilder implements AbstractQueryBuilderInterface
         return \trim(\implode(", ", $fields));
     }
 
-    protected function buildField($field, ?string $alias): string
+    protected function buildField($field, $alias): string
     {
         $params = [];
+
         $field = ($this->_fields[$field] ?? $field);
 
         /**
@@ -153,9 +159,9 @@ abstract class AbstractQueryBuilder implements AbstractQueryBuilderInterface
             $field = $field($params);
         }
 
-        $alias = isset($alias) ? "as {$alias}" : "";
+        $alias = isset($alias) && !is_numeric($alias) ? " as {$alias}" : "";
 
-        return "{$field} {$alias}";
+        return "{$field}{$alias}";
     }
 
     protected function buildFrom(): string
@@ -173,9 +179,9 @@ abstract class AbstractQueryBuilder implements AbstractQueryBuilderInterface
         return "from " . \trim(\implode(", ", $tables));
     }
 
-    protected function buildTable($table, ?string $alias): string
+    protected function buildTable($table, $alias): string
     {
-        if (\is_object($table) && \method_exists($table, 'build')) {
+        if (\is_object($table) && \class_implements($table)[AbstractQueryBuilderInterface::class] ?? false) {
             $table = $table->build();
         }
 
@@ -183,8 +189,8 @@ abstract class AbstractQueryBuilder implements AbstractQueryBuilderInterface
             throw new \LogicException(printf('Invalid type of table. Must be a string but %s given', \gettype($table)));
         }
 
-        $alias = isset($alias) ? "as {$alias}" : "";
-        return "$table $alias";
+        $alias = isset($alias) && !is_numeric($alias) ? " {$alias}" : "";
+        return "({$table}){$alias}";
     }
 
     abstract protected function buildWhere(): string;
@@ -247,5 +253,15 @@ abstract class AbstractQueryBuilder implements AbstractQueryBuilderInterface
         return $this->buildCountQuery();
     }
 
-    abstract protected function buildCountQuery();
+    protected function buildCountQuery()
+    {
+        return \trim(\implode(" ", [
+            "select count(*)",
+            $this->buildFrom(),
+            $this->buildWhere(),
+            $this->buildGroupBy(),
+            $this->buildOrderBy(),
+            $this->buildLimit(),
+        ])) ?: "";
+    }
 }
